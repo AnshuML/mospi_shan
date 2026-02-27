@@ -303,7 +303,9 @@ def map_year_to_option(user_year, options):
     y = int(user_year)
     targets = [
         f"{y}{y+1}",
+        f"{y}{str(y+1)[-2:]}",
         f"{y-1}{y}",
+        f"{y-1}{str(y)[-2:]}",
         str(y)
     ]
     norm_options = {normalize_year_string(o["option"]): o for o in options}
@@ -351,7 +353,11 @@ def select_best_filter_option(query, filter_name, options, cross_encoder):
     # YEAR FILTER
     # =========================
     if "year" in fname_lower and "base" not in fname_lower:
-        year_match = YEAR_PATTERN.search(q_lower)
+        # Remove "base year XXXX-XX" or "base year XXXX" from query
+        # so we only match the standalone year, not the base year value
+        q_for_year = re.sub(r"base\s+year\s+\d{4}[-/]?\d{0,2}", "", q_lower).strip()
+
+        year_match = YEAR_PATTERN.search(q_for_year)
 
         # user ne year nahi bola → Select All
         if not year_match:
