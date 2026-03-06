@@ -542,7 +542,7 @@ def search_indicators(query, top_k=25, max_products=3):
     if USE_QDRANT and qclient:
         hits = qclient.query_points(
             collection_name=COLLECTION,
-            query_vector=q_vec[0].tolist(),
+            query=q_vec[0].tolist(),
             limit=top_k
         ).points
         candidates = [h.payload for h in hits]
