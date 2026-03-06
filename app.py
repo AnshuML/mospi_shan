@@ -589,16 +589,40 @@ def search_indicators(query, top_k=25, max_products=3):
         candidates.sort(key=lambda x: x["score"], reverse=True)
     
     # --- GENERIC DATASET BOOST ---
-    # If the user explicitly mentioned a dataset (e.g. "WPI", "PLFS")
-    # ensure those indicators are prioritized.
+    # Strong boost if the user explicitly mentioned a dataset name or code
     q_words = set(q_lower.split())
-    dataset_codes = {d["code"].lower() for d in DATASETS}
-    mentioned_datasets = q_words.intersection(dataset_codes)
     
-    if mentioned_datasets:
+    # Map common keywords to dataset codes
+    dataset_keywords = {
+        "wholesale": "WPI",
+        "wpi": "WPI",
+        "consumer": "CPI",
+        "cpi": "CPI",
+        "labour": "PLFS",
+        "plfs": "PLFS",
+        "factory": "ASI",
+        "asi": "ASI",
+        "national": "NAS",
+        "nas": "NAS",
+        "iip": "IIP"
+    }
+    
+    mentioned_codes = set()
+    for word in q_words:
+        if word in dataset_keywords:
+            mentioned_codes.add(dataset_keywords[word].lower())
+    
+    # Also check if any full dataset code is in the query (case insensitive)
+    for ds in DATASETS:
+        code_low = ds["code"].lower()
+        if code_low in q_lower:
+            mentioned_codes.add(code_low)
+
+    if mentioned_codes:
         for c in candidates:
-            if c["parent"].lower() in mentioned_datasets:
-                c["score"] += 0.5 # Extra boost for explicit dataset mention
+            if c["parent"].lower() in mentioned_codes:
+                # Strong boost (2.0) to ensure it tops the list if explicitly requested
+                c["score"] += 2.0
         # Re-sort again
         candidates.sort(key=lambda x: x["score"], reverse=True)
     # ----------------------------------------------------
