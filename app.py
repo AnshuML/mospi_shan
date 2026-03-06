@@ -540,7 +540,11 @@ def search_indicators(query, top_k=25, max_products=3):
     q_vec /= np.linalg.norm(q_vec, axis=1, keepdims=True)
 
     if USE_QDRANT and qclient:
-        hits = qclient.search(collection_name=COLLECTION,query_vector=q_vec[0].tolist(),limit=top_k)
+        hits = qclient.query_points(
+            collection_name=COLLECTION,
+            query_vector=q_vec[0].tolist(),
+            limit=top_k
+        ).points
         candidates = [h.payload for h in hits]
     else:
         _, I = faiss_index.search(q_vec.astype("float32"), top_k)
@@ -650,7 +654,8 @@ def predict():
     results = []
 
     for ind, conf in zip(top_results, confidences):
-        dataset = next(d for d in DATASETS if d["code"] == ind["parent"])
+        # 500 Fix: Use fallback if dataset code not found in DATASETS
+        dataset = next((d for d in DATASETS if d["code"] == ind["parent"]), {"name": ind["parent"], "code": ind["parent"]})
         related_filters = [f for f in FILTERS if f["parent"] == ind["code"]]
 
         grouped = {}
