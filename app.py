@@ -7,6 +7,11 @@ import faiss
 from datetime import datetime
 import difflib
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env
+load_dotenv()
+
 # ================================
 # CONFIG
 # ================================
@@ -21,19 +26,35 @@ except Exception:
 # LLM (QUERY REWRITER ONLY)
 # ================================
 from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 
-try:
-    rewriter_llm = ChatOllama(
-        model="llama3:70b",
-        base_url="http://localhost:11434",
-        temperature=0.3
-    )
+rewriter_llm = None
 
-    rewriter_llm.invoke("ping")
-    print(" Ollama is running")
+# Try Groq First (Much faster, production recommended)
+groq_api_key = os.getenv("GROQ_API_KEY")
+if groq_api_key:
+    try:
+        rewriter_llm = ChatGroq(
+            model_name="llama-3.1-70b-versatile",
+            groq_api_key=groq_api_key,
+            temperature=0.3
+        )
+        print(" Using Groq Cloud LLM")
+    except Exception as e:
+        print(f" Groq initialization failed: {e}")
 
-except Exception as e:
-    print(" Ollama is not running")
+# Fallback to Ollama if Groq is not configured or fails
+if not rewriter_llm:
+    try:
+        rewriter_llm = ChatOllama(
+            model="llama3:70b",
+            base_url="http://localhost:11434",
+            temperature=0.3
+        )
+        rewriter_llm.invoke("ping")
+        print(" Ollama is running")
+    except Exception as e:
+        print(" No LLM provider (Ollama/Groq) is active")
 
 
 # ================================
