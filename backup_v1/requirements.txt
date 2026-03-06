@@ -1,10 +1,11 @@
 flask
 flask-cors
 numpy
-sentence-transformers>=2.2.2
+sentence-transformers
 faiss-cpu
 langchain-ollama
+langchain-groq
 python-dotenv
+qdrant-client
 pandas
 openpyxl
-rank_bm25
