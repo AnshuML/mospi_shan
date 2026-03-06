@@ -1,5 +1,3 @@
-
-
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import os, json, re
@@ -75,118 +73,28 @@ def detect_base_year(query):
     return None
 
 
-# def resolve_cpi_conflict(results, query):
-#     """
-#     Only when CPI and CPI2 both present in top results
-#     """
-#     datasets = [r["parent"] for r in results]
-
-#     if "CPI" not in datasets or "CPI2" not in datasets:
-#         return results  # kuch mat chhedo
-
-#     base_year = detect_base_year(query)
-
-#     # ---------- case 1: user ne base year bola ----------
-#     if base_year:
-#         if base_year >= 2024:
-#             # CPI2 rakho
-#             return [r for r in results if r["parent"] != "CPI"]
-#         else:
-#             # CPI rakho
-#             return [r for r in results if r["parent"] != "CPI2"]
-
-#     # ---------- case 2: base year nahi bola ----------
-#     return [r for r in results if r["parent"] != "CPI"]
-
-
-
-#################### new ###############
-
-def extract_cpi_intent(query: str):
-    prompt = f"""
-You are an intent classifier for CPI datasets.
-
-Query: {query}
-
-Return JSON only with keys:
-cpi_intent: true/false
-base_year: number or null
-wants_back_series: true/false
-has_year: number or null
-
-Rules:
-- CPI intent includes: CPI, inflation, price index
-- If user mentions base year → fill base_year
-- If user mentions past historical/back → wants_back_series true
-- If user mentions a year like 2021 → has_year = 2021
-"""
-
-    try:
-        res = rewriter_llm.invoke(prompt).content.strip()
-        return json.loads(res)
-    except:
-        return {
-            "cpi_intent": False,
-            "base_year": None,
-            "wants_back_series": False,
-            "has_year": None
-        }
-
-
 def resolve_cpi_conflict(results, query):
-
-    intent = extract_cpi_intent(query)
-
-    # run only if CPI intent
-    if not intent["cpi_intent"]:
-        return results
-
+    """
+    Only when CPI and CPI2 both present in top results
+    """
     datasets = [r["parent"] for r in results]
+
     if "CPI" not in datasets or "CPI2" not in datasets:
-        return results
+        return results  # kuch mat chhedo
 
-    base_year = intent["base_year"]
-    year = intent["has_year"]
-    wants_back = intent["wants_back_series"]
+    base_year = detect_base_year(query)
 
-    # -------------------------------------------------
-    # 1️⃣ explicit base year mentioned
-    # -------------------------------------------------
+    # ---------- case 1: user ne base year bola ----------
     if base_year:
         if base_year >= 2024:
-            # new base → CPI2
+            # CPI2 rakho
             return [r for r in results if r["parent"] != "CPI"]
         else:
-            # old base → CPI
+            # CPI rakho
             return [r for r in results if r["parent"] != "CPI2"]
 
-    # -------------------------------------------------
-    # 2️⃣ explicit back series intent
-    # -------------------------------------------------
-    if wants_back:
-        # always CPI2 back
-        return [r for r in results if r["parent"] != "CPI"]
-
-    # -------------------------------------------------
-    # 3️⃣ user mentioned year but NOT base year
-    # -------------------------------------------------
-    if year:
-
-        # year >= 2024 → new CPI2 current
-        if year >= 2024:
-            return [r for r in results if r["parent"] != "CPI"]
-
-        # year < 2024 → CPI (2012 base)
-        return [r for r in results if r["parent"] != "CPI2"]
-
-    # -------------------------------------------------
-    # 4️⃣ generic inflation query
-    # -------------------------------------------------
-    # default = latest CPI2
+    # ---------- case 2: base year nahi bola ----------
     return [r for r in results if r["parent"] != "CPI"]
-
-
-
 
 
 # ================================
@@ -209,8 +117,7 @@ STRICT RULES:
 7. NEVER add sector/gender/state unless explicitly present
 8. Output ONLY rewritten query
 9. No explanation
-10. If the query contains a known dataset short form (CPI, IIP, NAS, PLFS, ASI, HCES, NSS), append its full form in the rewritten query while keeping the short form unchanged (e.g., "CPI" → "CPI Consumer Price Index"), and do not expand anything not explicitly present.
-11. Do not remove any words from the user query
+10.If the query contains a known dataset short form (CPI, IIP, NAS, PLFS, ASI, HCES, NSS, AISHE, WPI, TUS, NFHS, ENVSTAT, EC, ESI), append its full form in the rewritten query while keeping the short form unchanged (e.g., "CPI" → "CPI Consumer Price Index"), and do not expand anything not explicitly present.
 
 
 SPECIAL RULE (VERY IMPORTANT):
@@ -219,13 +126,39 @@ If the query contains "IIP" and also contains any month name
 (January–December or short forms like Jan, Feb, etc.), 
 then add the word "monthly" to the query.
 
+If query contains both "year" and "base year", clearly separate them:
+
+
 Examples:
 "IIP July data" → "IIP monthly July data"
 "IIP for December" → "IIP monthly December"
 "IIP Aug 2022" → "IIP monthly Aug 2022"
+"gdp for year 2023-24 base year 2022-23" → "gdp year:2023-24 base_year:2022-23"
 
 DO NOT apply this rule to any other dataset.
 If query is about CPI, GDP, PLFS etc → do nothing.
+
+FREQUENCY NORMALIZATION RULE (VERY IMPORTANT):
+
+At the END of your rewritten query, append a frequency tag in the format [FREQ:value].
+Detect the user's INTENDED data frequency from the query:
+
+- If user explicitly says "quarterly", "quartarly", "quarter", "Q1", "Q2", "Q3", "Q4", "jul-sep", "oct-dec", "jan-mar", "apr-jun" → append [FREQ:quarterly]
+- If user explicitly says "annually", "annual", "yearly" → append [FREQ:annually]
+- If user explicitly says "monthly" as a FREQUENCY (e.g. "monthly data", "give monthly", "show monthly") → append [FREQ:monthly]
+- If user mentions a specific month name (January, February, etc.) → append [FREQ:monthly]
+- IMPORTANT: If "monthly" is used as an ADJECTIVE before salary/earnings/wage/income/pay (e.g. "monthly salary", "monthly earnings", "monthly wage"), this is NOT a frequency. Do NOT append [FREQ:monthly] for this.
+- If no frequency is mentioned or unclear → do NOT append any [FREQ:] tag
+
+Examples:
+"Female average monthly salary quarterly 2023-24 female urban Bihar" → "female average monthly salary quarterly 2023-24 female urban Bihar [FREQ:quarterly]"
+"Female average monthly salary 2023-24 female urban Bihar" → "female average monthly salary 2023-24 female urban Bihar"
+"give me monthly data for PLFS" → "give me monthly data for PLFS Periodic Labour Force Survey [FREQ:monthly]"
+"CPI data January 2024" → "CPI Consumer Price Index data January 2024 [FREQ:monthly]"
+"PLFS annual data 2023-24" → "PLFS Periodic Labour Force Survey annual data 2023-24 [FREQ:annually]"
+"Female average monthly salary in the public sector of frequency(quarterly),year(2023-24)" → "female average monthly salary in the public sector frequency quarterly year 2023-24 [FREQ:quarterly]"
+
+
 
 
 ALLOWED OPERATIONS:
@@ -237,7 +170,7 @@ ALLOWED OPERATIONS:
 
 CRITICAL RULE (VERY IMPORTANT):
 - If the user query is ONLY a dataset or product name
-  (examples: IIP, CPI, CPIALRL, HCES, ASI,NAS, PLFS,CPI2,ASI,),
+  (examples: IIP, CPI, CPIALRL, HCES, ASI, NAS, PLFS, CPI2, AISHE, WPI, TUS, NFHS, ENVSTAT, EC, EC4, EC5, EC6, ESI, NSS77, NSS78, NSS79C, ASUSE),
   then RETURN THE QUERY EXACTLY AS IT IS.
 - Dataset names must NEVER be replaced with normal English words.
 
@@ -250,7 +183,7 @@ STRICT SEMANTIC MAP (ONLY IF WORD EXISTS):
 - ladka → male
 - ladki → female
 
- FORBIDDEN:
+❌ FORBIDDEN:
 - Do NOT infer urban from city names
 - Do NOT infer rural from state names
 - Do NOT infer gender from profession
@@ -301,12 +234,20 @@ def normalize_year_string(s):
 
 def map_year_to_option(user_year, options):
     y = int(user_year)
+
+    # WPI explicit check: prioritize exact calendar year match first
+    if options and options[0].get("parent") == "WPI":
+        norm_options = {normalize_year_string(o["option"]): o for o in options}
+        exact_match = str(y)
+        if exact_match in norm_options:
+            return norm_options[exact_match]
+
     targets = [
-        f"{y}{y+1}",
-        f"{y}{str(y+1)[-2:]}",
-        f"{y-1}{y}",
-        f"{y-1}{str(y)[-2:]}",
-        str(y)
+         f"{y}{y+1}",            # → "20232024"
+        f"{y}{str(y+1)[-2:]}",  # → "202324"  ← NEW!
+        f"{y-1}{y}",            # → "20222023"
+        f"{y-1}{str(y)[-2:]}",  # → "202223"  ← NEW!
+        str(y)                   # → "2023"
     ]
     norm_options = {normalize_year_string(o["option"]): o for o in options}
     for t in targets:
@@ -345,19 +286,90 @@ def universal_filter_normalizer(ind_code, filters_json):
 # ================================
 # SMART FILTER ENGINE
 # ================================
-def select_best_filter_option(query, filter_name, options, cross_encoder):
+def select_best_filter_option(query, filter_name, options, cross_encoder,raw_query=None):
     q_lower = query.lower()
+    raw_lower=(raw_query or query).lower()
     fname_lower = filter_name.lower()
+     
+    # =========================
+    # FREQUENCY FILTER
+    # =========================
+    if fname_lower in ["frequency"]:
+
+        # --- PRIORITY 1: Check LLM [FREQ:xxx] tag (NEW CHANGE) ---
+        freq_tag_match = re.search(r'\[freq:\s*(\w+)\]', q_lower)
+        if freq_tag_match:
+            llm_freq = freq_tag_match.group(1).strip()
+            for opt in options:
+                if opt["option"].lower().startswith(llm_freq) or llm_freq.startswith(opt["option"].lower()):
+                    return opt
+
+        # --- PRIORITY 2: Detect if "monthly" is adjective (NEW CHANGE) ---
+        monthly_as_adjective = False
+        if "monthly" in q_lower or "monthly" in raw_lower:
+            monthly_adj_patterns = [
+                r"monthly\s+(salary|salaries|earning|earnings|income|wage|wages|pay|expenditure|consumption|average|gross)",
+                r"(average|mean|total|gross)\s+monthly",
+            ]
+            check_text = q_lower + " " + raw_lower
+            if any(re.search(p, check_text) for p in monthly_adj_patterns):
+                monthly_as_adjective = True
+
+        # --- Check for explicit mention (checks both LLM query and raw query) ---
+        for keyword in ["annually", "quarterly", "monthly", "annual"]:
+            if keyword == "monthly" and monthly_as_adjective:
+                continue  # skip — "monthly" is adjective here, not frequency
+            if keyword in q_lower or keyword in raw_lower:
+                for opt in options:
+                    if opt["option"].lower().startswith(keyword) or keyword.startswith(opt["option"].lower()):
+                        return opt
+
+        # --- Fuzzy match for misspelled frequency (e.g. "quartely" → "quarterly") ---
+        for keyword in ["annually", "annual", "quarterly", "monthly"]:
+            if keyword == "monthly" and monthly_as_adjective:
+                continue
+            for word in q_lower.split() + raw_lower.split():
+                if difflib.SequenceMatcher(None, keyword, word).ratio() > 0.80:
+                    for opt in options:
+                        if opt["option"].lower().startswith(keyword) or keyword.startswith(opt["option"].lower()):
+                            return opt
+
+        # --- Month names → Monthly (full names only to avoid "may" false positive) ---
+        month_names = [
+            "january", "february", "march", "april", "june",
+            "july", "august", "september", "october", "november", "december"
+        ]
+        if any(m in q_lower for m in month_names):
+            for opt in options:
+                if opt["option"].lower() in ["monthly", "month"]:
+                    return opt
+
+        # --- Quarter keywords → Quarterly ---
+        quarter_keywords = ["quarter", "quarterly", "q1", "q2", "q3", "q4",
+                            "jul-sep", "oct-dec", "jan-mar", "apr-jun"]
+        if any(qk in q_lower for qk in quarter_keywords):
+            for opt in options:
+                if opt["option"].lower() in ["quarterly"]:
+                    return opt
+
+        # --- Year format "2023-24" or standalone year → Annually ---
+        if re.search(r"\d{4}[-/]\d{2,4}", q_lower) or YEAR_PATTERN.search(q_lower):
+            for opt in options:
+                if opt["option"].lower() in ["annually", "annual"]:
+                    return opt
+
+        # --- No frequency clue → Select All ---
+        return {
+            "parent": options[0]["parent"],
+            "filter_name": filter_name,
+            "option" : options[0]["option"]
+        }
 
     # =========================
     # YEAR FILTER
     # =========================
     if "year" in fname_lower and "base" not in fname_lower:
-        # Remove "base year XXXX-XX" or "base year XXXX" from query
-        # so we only match the standalone year, not the base year value
-        q_for_year = re.sub(r"base\s+year\s+\d{4}[-/]?\d{0,2}", "", q_lower).strip()
-
-        year_match = YEAR_PATTERN.search(q_for_year)
+        year_match = YEAR_PATTERN.search(q_lower)
 
         # user ne year nahi bola → Select All
         if not year_match:
@@ -410,11 +422,33 @@ def select_best_filter_option(query, filter_name, options, cross_encoder):
             mentioned.append(opt)
             continue
 
+        #for word in q_lower.split():
+            #if difflib.SequenceMatcher(None, opt_text, word).ratio() > 0.80:
+                #mentioned.append(opt)
+                #break
+        # Safe synonym mapping ONLY for specific filters like Religion
+        synonyms = {
+            "muslim": "islam",
+            "muslims": "islam",
+            "islamic": "islam",
+            "hindu": "hinduism",
+            "hindi": "hinduism",
+            "sikh": "sikhism",
+            "christian": "christianity"
+        }
+
         for word in q_lower.split():
+            if word in synonyms:
+                mapped = synonyms[word]
+                # Safe prefix match ONLY if word is in our dictionary
+                if opt_text.startswith(mapped):
+                    mentioned.append(opt)
+                    break
+           
+            # Standard fuzzy match for everything else (Old logic intact)
             if difflib.SequenceMatcher(None, opt_text, word).ratio() > 0.80:
                 mentioned.append(opt)
                 break
-
     if mentioned:
         pairs = [(query, f"{filter_name} {o['option']}") for o in mentioned]
         scores = cross_encoder.predict(pairs)
@@ -521,6 +555,35 @@ def search_indicators(query, top_k=25, max_products=3):
     # CPI conflict resolve ONLY if both present
     candidates = resolve_cpi_conflict(candidates, query)
 
+    # ----------------------------------------------------
+    # NEW: WPI-SPECIFIC RERANKING & DISAMBIGUATION
+    # ----------------------------------------------------
+    q_lower = query.lower()
+    is_wpi_query = "wpi" in q_lower or "wholesale" in q_lower
+    
+    if is_wpi_query:
+        # Re-rank WPI indicators by checking if query words match their specific filters
+        for c in candidates:
+            if c["parent"] == "WPI":
+                ind_code = c["code"]
+                ind_filters = [f for f in FILTERS if f["parent"] == ind_code]
+                
+                match_bonus = 0
+                for filt in ind_filters:
+                    opt_lower = str(filt.get("option", "")).lower()
+                    # Assign a strong bonus if a specific filter item exactly appears in query
+                    if len(opt_lower) > 3 and opt_lower in q_lower:
+                        match_bonus += 0.6
+                
+                c["score"] += match_bonus
+        
+        # Suppress CPI returning when WPI explicitly asked for
+        candidates = [c for c in candidates if c["parent"] not in ["CPI", "CPIALRL"]]
+        
+        # Re-sort after bonus application
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+    # ----------------------------------------------------
+
     seen, final = set(), []
     for c in candidates:
 
@@ -598,6 +661,7 @@ def predict():
         for fname, opts in grouped.items():
             best_opt = select_best_filter_option(
                 query=q,
+                raw_query=raw_q,
                 filter_name=fname,
                 options=opts,
                 cross_encoder=cross_encoder
@@ -627,4 +691,3 @@ def predict():
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5009)
-
