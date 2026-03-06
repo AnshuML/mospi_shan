@@ -517,7 +517,8 @@ if USE_QDRANT:
         USE_QDRANT = False
         print("[WARN] Qdrant failed, using FAISS:", e)
 
-names = [clean_text(i["name"]) for i in INDICATORS]
+# IMPROVED: Prefix indicator name with parent dataset name for better semantic association (e.g. "WPI Wholesale price of Moong")
+names = [clean_text(i["parent"] + " " + i["name"]) for i in INDICATORS]
 descs = [clean_text(i.get("desc", "")) for i in INDICATORS]
 
 embeddings = (0.4 * bi_encoder.encode(names, convert_to_numpy=True) + 0.6 * bi_encoder.encode(descs, convert_to_numpy=True))
@@ -585,6 +586,20 @@ def search_indicators(query, top_k=25, max_products=3):
         candidates = [c for c in candidates if c["parent"] not in ["CPI", "CPIALRL"]]
         
         # Re-sort after bonus application
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+    
+    # --- GENERIC DATASET BOOST ---
+    # If the user explicitly mentioned a dataset (e.g. "WPI", "PLFS")
+    # ensure those indicators are prioritized.
+    q_words = set(q_lower.split())
+    dataset_codes = {d["code"].lower() for d in DATASETS}
+    mentioned_datasets = q_words.intersection(dataset_codes)
+    
+    if mentioned_datasets:
+        for c in candidates:
+            if c["parent"].lower() in mentioned_datasets:
+                c["score"] += 0.5 # Extra boost for explicit dataset mention
+        # Re-sort again
         candidates.sort(key=lambda x: x["score"], reverse=True)
     # ----------------------------------------------------
 
